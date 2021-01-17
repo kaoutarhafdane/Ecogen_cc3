@@ -1,0 +1,145 @@
+---
+title: "02_data-analysis2"
+output:
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+# sample inference
+on crée une nouvelle variable dadaFs pour corriger les jeux de données dada appliquée au donné Forward.
+La fonction dada() supprime toutes les erreurs de séquençage pour révéler les membres de la communauté séquencée. l'argument multithread=TRUE: le multithreading est activé et le nombre de threads disponibles est automatiquement déterminé. Si un entier est fourni, le nombre de threads à utiliser est défini en transmettant l'argument à setThreadOptions.
+
+```{r}
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+```
+
+dada appliqué au donné reverse.
+on crée une nouvelle variable dadaRs et on lui assigne la valeur de résultat de la fonction dada comme on a fait pour les reverse à fin de corriger les jeux de données appliquées pour les Reverse.
+
+```{r}
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+```
+
+dada a crée des objet de class dada: dadaFs et dadaRs
+on regarde ce qui est dans le premier étagers du placard de dadaFs, on peut changer le 1 pour regarder à n'importe quel étage de dadaFS.
+
+```{r}
+dadaFs[[1]]
+```
+
+# mairged paired reads
+
+on va merger Read 1 et read 2 pour obtenir les séquences entièrement débruitées en utilisant la fonction mergePairs(). La fusion est effectuée en alignant les lectures avant débruitées avec le complément inverse des lectures inverses débruitées correspondantes, puis en construisant les séquences «contig» fusionnées.
+verbose=TRUE:monter les étape avec le texte
+head(mergers[[1]]):inspecter les résultats en regardant les premières lignes
+
+```{r}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+# Inspect the merger data.frame from the first sample
+head(mergers[[1]])
+```
+
+Donc là on a les reads fusionnés avec succès.
+
+# construire la table d'observation
+
+A partir des merged, on crée un nouvelle objet seqtab 
+La fonction makeSequenceTable(), va permettre de construire une table de séquence (analogue à une table OTU) à partir de la liste d'échantillon mergers.
+la fonction dim va permettre de récupérer l'objet seqtab.
+ 
+```{r}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+```
+
+Ici on veut regarder la distribution de la longeur des séquences.
+la fonction getSequences() va extraire les séquences de l'objet seqtab.
+nchar() va prenddre le résulat de la fonction getSequences comme argument et renvoie un vecteur dont les éléments contiennent les tailles des éléments correspondants. 
+table() va permettre ensuite de créer un tableau de tout cela.
+
+```{r}
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+```
+
+# Remove chimeras
+
+Une chimère: ça se passe pendant l'amplification par PCR, donc par ex un ADN 16s amplifier par un fragment reverse et forrward.
+Si on prend que le forward,y aura élongation mais imaginant qu'elle s'arréte avant la fin de la séq 16S.
+Donc on va avoir le fragment 16S qui n'a pas bouger et un fragment non complet. donc après le 2ème cycle, le fragment non complet va pouvoir s'hybrider avec un 16s d'une autre bactérie, et l'élongation va continuer.
+on va avoir comme résultat au final un fragment hybride qui provient du premier ARN 16 et du deuxième.
+cela s'appelle chimère.
+On va éliminer ces chimères en utlisant la fonction removeBimeraDenovo(), et on va donner la valeur de résultat de la fonction à une nouvelle variable appelée seqtab.mochim
+le système va regarder tout les séq rares dans le début contig correspont au premier ARN et la fin au deuxième.
+
+```{r message=FALSE}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+```
+
+
+calcul de ratio chimère qui est égale à la somme des sequences se trouvant dans l'objet seqtab.mochim (c'est l'objet après remove des chimères) / somme des séquences se traouvent dans l'objet seqtab(avant d'enlever les chimères)
+
+```{r}
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+y a environ 61% ((1-39)*100) de séq chimériques dans notre jeu de données.
+
+# Track reads through the pipeline
+
+résumé des fichiers qualité.
+construire une table 
+on crée un nouvel objet qui est getN c'est une variable qui prend le rôle d'une fonction
+apliquer la fonnction get N qui est la somme des get uniq de dadaFS
+la table track va être la concaténation de tout ce qui est entre parentèse.
+head(track) : pour visualiser le tableau
+
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+```
+
+
+# appeler la librairie dada2
+```{r message=FALSE}
+library("dada2")
+```
+
+# assignation de la taxonomie
+
+Il va regarder dans le base de données et à partir des séq qui sont proches, et va assigner une taxonomie.
+
+c'est une façon d'attribuer une taxonomie aux séquences.
+La fonction assignTaxonomy() prend en entrée un ensemble de séquences à classer et un ensemble d'apprentissage de séquences de référence avec une taxonomie connue (silva en ce cas), et produit des affectations taxonomiques avec au moins une minBootconfiance bootstrap.
+
+
+```{r}
+library(dada2)
+taxa <- assignTaxonomy(seqtab.nochim, "~/silva_nr99_v138_train_set.fa.gz", multithread=TRUE)
+```
+
+ajout d'espèces dans le répertoire taxa contenant les fichiers fastq.
+
+```{r message=FALSE, warning=FALSE}
+library(dada2)
+taxa <- addSpecies(taxa, "~/silva_species_assignment_v138.fa.gz")
+```
+
+Inspecter les affectations taxonomiques:
+
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+
+les Proteobacteria sont bien représentés parmi les taxons les plus abondants dans ces échantillons de la rade de Brest. Pas d'attributions d'espèces, parce qu'il est souvent impossible de faire des assignations d'espèces sans ambiguïté à partir de sous-segments du gène 16S.
+
+```{r}
+save.image(file="02_data-analysis")
+```
