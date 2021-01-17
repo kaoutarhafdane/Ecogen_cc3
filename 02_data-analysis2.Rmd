@@ -10,6 +10,7 @@ on crée une nouvelle variable dadaFs pour corriger les jeux de données dada ap
 La fonction dada() supprime toutes les erreurs de séquençage pour révéler les membres de la communauté séquencée. l'argument multithread=TRUE: le multithreading est activé et le nombre de threads disponibles est automatiquement déterminé. Si un entier est fourni, le nombre de threads à utiliser est défini en transmettant l'argument à setThreadOptions.
 
 ```{r}
+library(dada2)
 dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
 ```
 
